@@ -13,7 +13,6 @@ from base64 import b64decode, b64encode
 from io import BytesIO
 from json import dumps, loads
 
-import magic
 from axolotl.kdf.hkdfv3 import HKDFv3
 from axolotl.util.byteutil import ByteUtil
 from cryptography.hazmat.backends import default_backend
@@ -69,7 +68,8 @@ class WhatsAPIDriver(object):
 
     _SELECTORS = {
         'firstrun': "#wrapper",
-        'qrCode': "img[alt=\"Scan me!\"]",
+        # 'qrCode': "img[alt=\"Scan me!\"]",
+        'qrCode': ["img[alt=\"Scan me!\"]", 'canvas[aria-label=\"Scan me!\"]'],
         'qrCodePlain': "div[data-ref]",
         'mainPage': ".app.two",
         'chatList': ".infinite-list-viewport",
@@ -523,8 +523,35 @@ class WhatsAPIDriver(object):
 
         raise ChatNotFoundError('Chat for phone {0} not found'.format(number))
 
-    def reload_qr(self):
-        self.driver.find_element_by_css_selector(self._SELECTORS['QRReloader']).click()
+    def find_any_by_css_selector(self, selector_name: str):
+        selector = self._SELECTORS[selector_name]
+        if isinstance(selector, str):
+            return self.driver.find_element_by_css_selector(selector)
+        for name in selector:
+            try:
+                element = self.driver.find_element_by_css_selector(name)
+                if element is not None:
+                    return element
+            except NoSuchElementException:
+                pass
+        raise NoSuchElementException(f'Unable to find element for {selector_name}')
+
+    def reload_qr(self) -> bool:
+        try:
+            element = self.find_any_by_css_selector('QRReloader')
+            if element is not None:
+                element.click()
+                self.logger.info("QR Code reloaded")
+                return True
+        except NoSuchElementException:
+            return False
+
+    def requires_reload(self):
+        try:
+            self.find_any_by_css_selector('QRReloader')
+            return True
+        except NoSuchElementException:
+            return False
 
     def get_status(self):
         """
@@ -543,7 +570,7 @@ class WhatsAPIDriver(object):
         except NoSuchElementException:
             pass
         try:
-            self.driver.find_element_by_css_selector(self._SELECTORS['qrCode'])
+            self.find_any_by_css_selector('qrCode')
             return WhatsAPIDriverStatus.NotLoggedIn
         except NoSuchElementException:
             pass
@@ -589,7 +616,7 @@ class WhatsAPIDriver(object):
         :param path: file path
         :return: returns the converted string and formatted for the send media function send_media
         """
-
+        import magic
         mime = magic.Magic(mime=True)
         content_type = mime.from_file(path)
         archive = ''
